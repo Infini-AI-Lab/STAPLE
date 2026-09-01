@@ -1,0 +1,96 @@
+cff-version: 1.2.0
+title: "STAPLE: Static Sparse Upcycling of Pretrained Checkpoints via Embedding Modules"
+message: "If you use this code, please cite the STAPLE paper as below."
+type: software
+authors:
+  - given-names: Ranajoy
+    family-names: Sadhukhan
+  - given-names: Euijin
+    family-names: Hong
+  - given-names: Sheng
+    family-names: Cao
+  - given-names: Zechun
+    family-names: Liu
+  - given-names: Shuowei
+    family-names: Jin
+  - given-names: Sha
+    family-names: Li
+  - given-names: Changlong
+    family-names: Yu
+  - given-names: Xin
+    family-names: Liu
+  - given-names: Qin
+    family-names: Lu
+  - given-names: Zhenyu
+    family-names: Shi
+  - given-names: Priyanka
+    family-names: Nigam
+  - given-names: Beidi
+    family-names: Chen
+repository-code: "https://github.com/Infini-AI-Lab/STAPLE"
+url: "https://infini-ai-lab.github.io/STAPLE"
+license: BSD-3-Clause
+preferred-citation:
+  type: article
+  title: "STAPLE: Static Sparse Upcycling of Pretrained Checkpoints via Embedding Modules"
+  authors:
+    - given-names: Ranajoy
+      family-names: Sadhukhan
+    - given-names: Euijin
+      family-names: Hong
+    - given-names: Sheng
+      family-names: Cao
+    - given-names: Zechun
+      family-names: Liu
+    - given-names: Shuowei
+      family-names: Jin
+    - given-names: Sha
+      family-names: Li
+    - given-names: Changlong
+      family-names: Yu
+    - given-names: Xin
+      family-names: Liu
+    - given-names: Qin
+      family-names: Lu
+    - given-names: Zhenyu
+      family-names: Shi
+    - given-names: Priyanka
+      family-names: Nigam
+    - given-names: Beidi
+      family-names: Chen
+  journal: "arXiv preprint arXiv:2610.12599"
+  year: 2026
+  url: "https://arxiv.org/abs/2610.12599"
+references:
+  - type: conference-paper
+    title: "TorchTitan: One-stop PyTorch native solution for production ready LLM pre-training"
+    authors:
+      - family-names: Liang
+        given-names: Wanchao
+      - family-names: Liu
+        given-names: Tianyu
+      - family-names: Wright
+        given-names: Less
+      - family-names: Constable
+        given-names: Will
+      - family-names: Gu
+        given-names: Andrew
+      - family-names: Huang
+        given-names: Chien-Chin
+      - family-names: Zhang
+        given-names: Iris
+      - family-names: Feng
+        given-names: Wei
+      - family-names: Huang
+        given-names: Howard
+      - family-names: Wang
+        given-names: Junjie
+      - family-names: Purandare
+        given-names: Sanket
+      - family-names: Nadathur
+        given-names: Gokul
+      - family-names: Idreos
+        given-names: Stratos
+    collection-title: "The Thirteenth International Conference on Learning Representations (ICLR 2025)"
+    year: 2025
+    url: "https://openreview.net/forum?id=SFN6Wm7YBI"

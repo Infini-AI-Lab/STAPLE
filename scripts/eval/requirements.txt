@@ -1,0 +1,13 @@
+# Dependencies for scripts/eval only (training does not need them):
+#   pip install -r scripts/eval/requirements.txt
+#
+# The paper numbers come from lm-eval 0.4.10 as vendored in
+# Infini-AI-Lab/lm-eval-stem. It differs from upstream lm-eval==0.4.10 only in
+# the mbpp/humaneval code_eval call (timeout=10.0, num_workers=1 instead of the
+# 3.0 s / 4-worker defaults), so upstream 0.4.10 can score a slow-but-correct
+# solution as a failure.
+lm_eval @ git+https://github.com/Infini-AI-Lab/lm-eval-stem.git@aaf6335678f82c1b127efe9a861f85d9f1dedbc3
+# code_eval metric for mbpp / humaneval
+evaluate
+# --tasks_config YAML files
+pyyaml

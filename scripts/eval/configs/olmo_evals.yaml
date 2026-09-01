@@ -1,0 +1,51 @@
+# The ten-task suite reported in the STAPLE paper, for
+# scripts/eval/eval_harness.py --tasks_config.
+#
+# The top-level `tasks:` list is passed to lm-eval's simple_evaluate(tasks=...).
+# Entries may be:
+#   - a plain task name (string), or
+#   - a per-task config dict with lm-eval overrides (num_fewshot, doc_to_text,
+#     doc_to_target, target_delimiter, generation_kwargs, dataset_path, ...).
+#
+# Each `dataset_path` names an offline copy of the task's HF dataset (a Hub
+# snapshot directory) and is resolved under --dataset_root, e.g.
+#   --dataset_root /data/eval_data  ->  /data/eval_data/hellaswag
+# arc_easy and arc_challenge share the ai2_arc directory. To fetch from the HF
+# Hub instead, drop the `dataset_path` keys (and --dataset_root).
+#
+# mbpp and humaneval execute generated code and additionally require
+# --confirm_run_unsafe_code on the eval_harness.py command line.
+tasks:
+  - task: hellaswag
+    dataset_path: hellaswag
+  - task: winogrande
+    dataset_path: winogrande
+  - task: arc_easy
+    dataset_path: ai2_arc
+  - task: arc_challenge
+    dataset_path: ai2_arc
+  - task: mmlu
+    dataset_path: mmlu
+  - task: gsm8k
+    dataset_path: gsm8k
+  - task: mbpp
+    dataset_path: mbpp
+  - task: humaneval
+    dataset_path: humaneval
+  - task: hendrycks_math
+    dataset_path: hendrycks_math
+  - task: drop
+    dataset_path: drop
+    num_fewshot: 3
+    description: "The following are reading comprehension questions, where the answer to each question is either a segment of text from the corresponding passage, a number, or a date (containing any of the date, month, and/or year components). Some questions may require you to pull together information pieces from the passage and reason over them.\n\n"
+    doc_to_text: "Passage: {{passage}}\nQuestion: {{question}}\nAnswer:"
+    doc_to_target: " {{answers[0]|join(', ')}}"
+    target_delimiter: ""
+    generation_kwargs:
+      until:
+        - "Passage:"
+        - "Question:"
+        - "\n\n"
+      max_gen_toks: 100
+      do_sample: false
+      temperature: 0.0
