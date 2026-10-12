@@ -1,0 +1,1111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STAPLE: Static Sparse Upcycling of Pretrained Checkpoints via Embedding Modules</title>
+<meta name="description" content="STAPLE upcycles dense pretrained LLMs by adding zero-initialized, token-indexed STEM embeddings to the FFN up-projection stream — no router, no load balancing, dense-like serving cost.">
+<meta property="og:title" content="STAPLE: Static Sparse Upcycling of Pretrained Checkpoints via Embedding Modules">
+<meta property="og:description" content="Static, token-indexed memory added to a pretrained checkpoint: up to 2–3 points over continued dense training on OLMo-2 1B, higher average than MoE upcycling at 2× its decode throughput, and within 1.5% of dense decode throughput.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="static/images/radar_domains.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#fcfcfe; --card:#ffffff; --ink:#12142a; --ink-2:#494e6b; --ink-3:#767c96;
+  --line:#e5e6ef; --line-2:#eeeff5;
+  --accent:#4c37d6; --accent-2:#0e9384; --accent-soft:#f0edff; --accent-soft-2:#e6f6f3;
+  --warn-soft:#fff4e8; --warn:#b5651d;
+  --shadow:0 1px 2px rgba(18,20,42,.04), 0 8px 28px -12px rgba(18,20,42,.16);
+  --shadow-lg:0 2px 4px rgba(18,20,42,.04), 0 24px 60px -22px rgba(18,20,42,.28);
+  --radius:16px;
+  --gutter:28px;   /* page side padding */
+  --measure:1080px;/* width of the running-text column */
+  --serif:"Newsreader",Georgia,serif;
+  --sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --paper:#0b0c16; --card:#14162a; --ink:#eef0fa; --ink-2:#a9aecb; --ink-3:#7b81a3;
+    --line:#252943; --line-2:#1d2038;
+    --accent:#9c8cff; --accent-2:#39c8b4; --accent-soft:#1e1b3d; --accent-soft-2:#10302c;
+    --warn-soft:#2c2113; --warn:#e0a55f;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 28px -12px rgba(0,0,0,.7);
+    --shadow-lg:0 2px 4px rgba(0,0,0,.4), 0 24px 60px -22px rgba(0,0,0,.85);
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0b0c16; --card:#14162a; --ink:#eef0fa; --ink-2:#a9aecb; --ink-3:#7b81a3;
+  --line:#252943; --line-2:#1d2038;
+  --accent:#9c8cff; --accent-2:#39c8b4; --accent-soft:#1e1b3d; --accent-soft-2:#10302c;
+  --warn-soft:#2c2113; --warn:#e0a55f;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 28px -12px rgba(0,0,0,.7);
+  --shadow-lg:0 2px 4px rgba(0,0,0,.4), 0 24px 60px -22px rgba(0,0,0,.85);
+}
+
+*{box-sizing:border-box}
+html{scroll-behavior:smooth; scroll-padding-top:76px}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:var(--sans); font-size:17px; line-height:1.65;
+  -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+}
+.wrap{max-width:1240px; margin:0 auto; padding:0 var(--gutter)}
+.narrow{max-width:var(--measure); margin-left:auto; margin-right:auto}
+/* Where .narrow sits on the same element as .wrap, .wrap's own padding would
+   eat into the text column and shift it right of every other section. Widen by
+   the gutter on both sides so every section shares one left edge. */
+.wrap.narrow{max-width:calc(var(--measure) + var(--gutter) * 2)}
+a{color:var(--accent); text-decoration:none}
+a:hover{text-decoration:underline}
+h1,h2,h3{line-height:1.2; letter-spacing:-.02em; margin:0}
+p{margin:0 0 1.05em}
+p:last-child{margin-bottom:0}
+
+/* ---------- nav ---------- */
+nav{
+  position:sticky; top:0; z-index:50; backdrop-filter:saturate(180%) blur(14px);
+  background:color-mix(in srgb, var(--paper) 82%, transparent);
+  border-bottom:1px solid var(--line);
+}
+nav .wrap{display:flex; align-items:center; gap:26px; height:60px}
+.brand{font-weight:800; letter-spacing:.14em; font-size:14px; color:var(--ink); flex:none}
+.brand span{color:var(--accent)}
+.navlinks{display:flex; gap:22px; margin-left:auto; overflow-x:auto; scrollbar-width:none}
+.navlinks::-webkit-scrollbar{display:none}
+.navlinks a{color:var(--ink-2); font-size:14px; font-weight:500; white-space:nowrap}
+.navlinks a:hover{color:var(--accent); text-decoration:none}
+.themebtn{
+  flex:none; border:1px solid var(--line); background:var(--card); color:var(--ink-2);
+  width:34px; height:34px; border-radius:10px; cursor:pointer; font-size:15px; line-height:1;
+}
+.themebtn:hover{color:var(--accent); border-color:var(--accent)}
+@media (max-width:760px){ .navlinks{display:none} }
+
+/* ---------- hero ---------- */
+header{position:relative; overflow:hidden; padding:78px 0 54px; border-bottom:1px solid var(--line)}
+header::before{
+  content:""; position:absolute; inset:-45% -10% auto -10%; height:150%;
+  background:
+    radial-gradient(52% 42% at 18% 12%, color-mix(in srgb, var(--accent) 24%, transparent), transparent 62%),
+    radial-gradient(46% 40% at 82% 8%, color-mix(in srgb, var(--accent-2) 22%, transparent), transparent 60%);
+  filter:blur(6px); pointer-events:none;
+}
+header .wrap{position:relative}
+h1.title{
+  font-family:var(--serif); font-size:clamp(38px,6.1vw,62px); font-weight:600;
+  letter-spacing:-.03em; margin-bottom:32px;
+}
+h1.title .kw{
+  background:linear-gradient(100deg,var(--accent) 5%,var(--accent-2) 95%);
+  -webkit-background-clip:text; background-clip:text; color:transparent;
+  font-weight:700; font-family:var(--sans); letter-spacing:-.045em;
+}
+.authors{font-size:16px; line-height:2; color:var(--ink); max-width:62ch; margin-bottom:8px}
+.authors a{color:var(--ink); border-bottom:1px solid var(--line)}
+.authors sup{color:var(--accent); font-weight:700; font-size:11px}
+.affil{font-size:14.5px; color:var(--ink-3); margin-bottom:6px}
+.affil sup{color:var(--accent); font-weight:700}
+.affil .sep{opacity:.4; padding:0 8px}
+.corr{font-size:13.5px; color:var(--ink-3); font-style:italic}
+
+.btnrow{display:flex; flex-wrap:wrap; gap:11px; margin-top:32px}
+.btn{
+  display:inline-flex; align-items:center; gap:9px; padding:11px 20px; border-radius:12px;
+  font-size:14.5px; font-weight:600; border:1px solid var(--line); background:var(--card);
+  color:var(--ink); box-shadow:var(--shadow); transition:transform .15s ease, box-shadow .15s ease;
+}
+.btn:hover{text-decoration:none; transform:translateY(-2px); box-shadow:var(--shadow-lg)}
+.btn.primary{background:var(--ink); color:var(--paper); border-color:var(--ink)}
+.btn svg{width:17px; height:17px; flex:none}
+.btn .hf{font-size:17px; line-height:1; flex:none}
+
+/* ---------- sections ---------- */
+section{padding:74px 0; border-bottom:1px solid var(--line-2)}
+section:last-of-type{border-bottom:none}
+.kicker{
+  font-size:12.5px; font-weight:700; letter-spacing:.13em; text-transform:uppercase;
+  color:var(--accent); margin-bottom:12px;
+}
+h2{font-family:var(--serif); font-size:clamp(29px,4vw,40px); font-weight:600; margin-bottom:14px}
+h3{font-size:19px; font-weight:700; letter-spacing:-.015em; margin:34px 0 10px}
+.lede{font-size:19.5px; color:var(--ink-2); margin-bottom:34px; font-family:var(--serif)}
+
+/* ---------- tldr ---------- */
+.tldr{
+  background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+  padding:32px 34px; box-shadow:var(--shadow); position:relative; overflow:hidden;
+}
+.tldr::before{content:""; position:absolute; left:0; top:0; bottom:0; width:4px;
+  background:linear-gradient(180deg,var(--accent),var(--accent-2))}
+.tldr h3{margin-top:0; font-size:13px; letter-spacing:.13em; text-transform:uppercase; color:var(--accent)}
+.tldr p{font-size:18.5px; font-family:var(--serif); color:var(--ink)}
+.tldr strong{font-family:var(--sans); font-weight:650; font-size:17px}
+
+/* ---------- cards ---------- */
+.cards{display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-top:8px}
+.card{
+  background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+  padding:26px 24px; box-shadow:var(--shadow);
+}
+.card .ico{
+  width:38px; height:38px; border-radius:11px; display:grid; place-items:center;
+  background:var(--accent-soft); color:var(--accent); font-size:18px; margin-bottom:15px;
+}
+.card:nth-child(2) .ico{background:var(--accent-soft-2); color:var(--accent-2)}
+.card:nth-child(3) .ico{background:var(--warn-soft); color:var(--warn)}
+.card h4{margin:0 0 8px; font-size:17px; font-weight:700; letter-spacing:-.015em}
+.card p{font-size:15px; color:var(--ink-2); margin:0}
+@media (max-width:880px){ .cards{grid-template-columns:1fr} }
+
+/* ---------- figures ---------- */
+figure{margin:34px 0 0}
+.figgrid{display:grid; gap:14px}
+.figgrid.c3{grid-template-columns:repeat(3,1fr)}
+.figgrid.c2{grid-template-columns:repeat(2,1fr)}
+/* The three teaser panels have different aspect ratios, so equal columns would
+   render them at diminishing heights. Size the columns by aspect ratio instead
+   (and drop the frame padding, which would otherwise skew the arithmetic) so
+   all three land at exactly the same height. */
+.figgrid.teaser{grid-template-columns:1.1414fr 1.1306fr 1.1272fr}
+/* Same trick for the two efficiency panels, whose aspect ratios differ by
+   ~1.9x. Zeroing the padding keeps the columns exact at every viewport width;
+   with padding the constant 30px of chrome per column does not scale with fr. */
+.figgrid.syseff{grid-template-columns:2.6622fr 1.4266fr}
+.figgrid.teaser .frame,.figgrid.syseff .frame{padding:0; overflow:hidden}
+@media (max-width:880px){
+  .figgrid.c3,.figgrid.c2,.figgrid.teaser,.figgrid.syseff{grid-template-columns:1fr}
+  .figgrid.teaser .frame,.figgrid.syseff .frame{padding:14px}
+}
+/* Text beside a single figure. */
+.split{display:grid; grid-template-columns:1fr 1fr; gap:34px; align-items:center; margin-top:34px}
+.split figure{margin:0}
+.split figcaption{margin-top:12px}
+@media (max-width:880px){ .split{grid-template-columns:1fr} }
+.frame{
+  background:#fff; border:1px solid var(--line); border-radius:14px; padding:14px;
+  display:flex; align-items:center; justify-content:center; box-shadow:var(--shadow);
+}
+.frame img{width:100%; height:auto; display:block; border-radius:5px}
+/* Captions sit in the same column as running text, even under a wider figure,
+   so every piece of prose on the page shares one left edge. */
+figcaption{
+  font-size:14.5px; color:var(--ink-2); margin:16px auto 0; line-height:1.6;
+  max-width:var(--measure);
+}
+figcaption b{color:var(--ink)}
+.panel-label{
+  font-size:12px; font-weight:700; color:var(--ink-3); letter-spacing:.08em;
+  text-transform:uppercase; margin-bottom:9px; text-align:center;
+}
+
+/* ---------- equations ---------- */
+.eqbox{
+  background:var(--card); border:1px solid var(--line); border-left:3px solid var(--accent);
+  border-radius:12px; padding:6px 26px; margin:22px 0; overflow-x:auto;
+}
+.eqbox.muted{border-left-color:var(--ink-3); opacity:.9}
+/* The one term that differs between the three variants. */
+.eqhl{color:var(--accent)}
+/* MathJax: let long display equations scroll inside their box, and keep the
+   hidden accessibility MathML from widening the page on narrow screens. */
+mjx-container[display="true"]{overflow-x:auto; overflow-y:hidden; padding:2px 0}
+/* Two-element selector so these win over MathJax's own !important rules,
+   which are injected into <head> after this stylesheet. */
+mjx-container mjx-assistive-mml{
+  position:absolute!important; width:1px!important; height:1px!important;
+  padding:0!important; margin:-1px!important; border:0!important;
+  overflow:hidden!important; clip:rect(0,0,0,0)!important; white-space:nowrap!important;
+}
+.eqlabel{font-size:12.5px; color:var(--ink-3); font-weight:600; letter-spacing:.05em; margin-top:14px}
+
+/* ---------- disclosure ---------- */
+details.disclose{
+  margin-top:34px; background:var(--card); border:1px solid var(--line);
+  border-radius:14px; box-shadow:var(--shadow);
+}
+details.disclose>summary{
+  display:flex; align-items:center; gap:11px; padding:16px 22px;
+  cursor:pointer; list-style:none; border-radius:14px;
+}
+details.disclose>summary::-webkit-details-marker{display:none}
+details.disclose>summary h3{margin:0; font-size:18px}
+details.disclose>summary:hover h3{color:var(--accent)}
+details.disclose>summary:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+details.disclose .chev{
+  width:17px; height:17px; flex:none; color:var(--ink-3);
+  transition:transform .18s ease;
+}
+details.disclose[open] .chev{transform:rotate(90deg); color:var(--accent)}
+details.disclose .body{padding:0 22px 20px}
+details.disclose .body>p:first-child{margin-top:0}
+@media (prefers-reduced-motion:reduce){ details.disclose .chev{transition:none} }
+
+/* ---------- tables ---------- */
+.tablewrap{
+  overflow-x:auto; border:1px solid var(--line); border-radius:14px;
+  background:var(--card); box-shadow:var(--shadow); margin-top:26px;
+}
+table{border-collapse:collapse; width:100%; font-size:14px; font-variant-numeric:tabular-nums}
+th,td{padding:9px 11px; text-align:right; white-space:nowrap; border-bottom:1px solid var(--line-2)}
+th:first-child,td:first-child{text-align:left; position:sticky; left:0; background:var(--card); z-index:1}
+thead th{
+  font-size:12px; font-weight:700; color:var(--ink-2);
+  border-bottom:1px solid var(--line); background:var(--card); position:sticky; top:0;
+}
+thead tr.grouphdr th{
+  font-size:11px; text-transform:uppercase; letter-spacing:.09em; color:var(--ink-3);
+  border-bottom:none; padding-bottom:2px; text-align:center;
+}
+tbody tr:last-child td{border-bottom:none}
+tr.sub td{
+  background:var(--line-2); font-size:11.5px; font-weight:700; letter-spacing:.09em;
+  text-transform:uppercase; color:var(--ink-3); text-align:left; padding:8px 11px;
+}
+tr.sub td:first-child{background:var(--line-2)}
+tr.hero td{background:var(--accent-soft); font-weight:600}
+tr.hero td:first-child{background:var(--accent-soft)}
+tr.base td{color:var(--ink-2)}
+td.best{font-weight:700; color:var(--ink)}
+.delta{font-weight:700; color:var(--accent-2)}
+.delta.neg{color:var(--warn)}
+.tnote{font-size:13.5px; color:var(--ink-3); margin-top:14px; line-height:1.6}
+
+/* ---------- pipeline ---------- */
+.pipe{display:grid; grid-template-columns:1fr auto 1fr auto 1fr; gap:12px; align-items:stretch; margin-top:30px}
+.pipe .step{background:var(--card); border:1px solid var(--line); border-radius:14px; padding:20px; box-shadow:var(--shadow)}
+.pipe .step .t{font-size:12px; font-weight:700; letter-spacing:.09em; text-transform:uppercase; color:var(--accent); margin-bottom:7px}
+.pipe .step h4{margin:0 0 6px; font-size:16.5px; font-weight:700}
+.pipe .step p{margin:0; font-size:14px; color:var(--ink-2)}
+.pipe .arrow{color:var(--ink-3); font-size:20px; display:grid; place-items:center}
+@media (max-width:880px){ .pipe{grid-template-columns:1fr} .pipe .arrow{transform:rotate(90deg)} }
+
+/* ---------- steering ---------- */
+.probe{
+  background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+  padding:24px 26px; margin-top:28px; box-shadow:var(--shadow);
+}
+.probe code{
+  font-family:var(--mono); font-size:13.5px; background:var(--accent-soft);
+  padding:2px 7px; border-radius:6px; color:var(--accent);
+}
+.probe .row{display:flex; gap:10px; align-items:baseline; flex-wrap:wrap; margin-bottom:9px}
+.probe .lbl{font-size:12px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-3); min-width:120px}
+
+/* ---------- GSM8K trace ---------- */
+.question{
+  background:var(--card); border:1px solid var(--line); border-radius:14px;
+  padding:16px 20px; box-shadow:var(--shadow); font-size:15.5px; color:var(--ink-2);
+}
+.question .lbl{display:block; font-size:12px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-3); margin-bottom:6px}
+.trace{display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-top:14px}
+.tcard{
+  background:var(--card); border:1px solid var(--line); border-radius:14px;
+  box-shadow:var(--shadow); overflow:hidden; display:flex; flex-direction:column;
+}
+.tcard .hd{
+  display:flex; align-items:baseline; gap:10px; padding:11px 16px;
+  border-bottom:1px solid var(--line); font-size:13.5px; font-weight:700; color:var(--ink);
+}
+.tcard .hd .ans{margin-left:auto; font-family:var(--mono); font-size:13px; white-space:nowrap}
+.tcard .bd{padding:13px 16px 15px; font-family:var(--mono); font-size:12.5px; line-height:1.75; color:var(--ink-2)}
+.tcard .bd p{margin:0 0 .45em}
+.tcard.edit{border-color:color-mix(in srgb, var(--warn) 50%, var(--line))}
+.tcard.edit .hd{background:var(--warn-soft)}
+.tcard.ctrl{border-color:color-mix(in srgb, var(--accent-2) 45%, var(--line))}
+.tcard.ctrl .hd{background:var(--accent-soft-2)}
+.tcard .calc{color:var(--ink-3)}
+.chg{background:var(--warn-soft); color:var(--warn); font-weight:700; border-radius:4px; padding:0 3px}
+@media (max-width:880px){ .trace{grid-template-columns:1fr} }
+
+/* ---------- implementation table ---------- */
+
+/* ---------- bibtex ---------- */
+pre.bib{
+  background:var(--card); border:1px solid var(--line); border-radius:14px;
+  padding:22px 24px; overflow-x:auto; font-family:var(--mono); font-size:13px;
+  line-height:1.75; color:var(--ink-2); box-shadow:var(--shadow); margin:0;
+}
+.copybtn{
+  float:right; border:1px solid var(--line); background:var(--paper); color:var(--ink-2);
+  border-radius:9px; padding:6px 13px; font-size:12.5px; font-weight:600; cursor:pointer;
+  font-family:var(--sans);
+}
+.copybtn:hover{color:var(--accent); border-color:var(--accent)}
+
+footer{padding:46px 0 60px; color:var(--ink-3); font-size:14px}
+footer .wrap{display:flex; flex-wrap:wrap; gap:16px; justify-content:space-between; align-items:center}
+
+ul.tight,ol.tight{margin:0 0 1em; padding-left:1.15em}
+ul.tight li,ol.tight li{margin-bottom:.5em; color:var(--ink-2)}
+ul.tight li b,ol.tight li b{color:var(--ink)}
+.mono{font-family:var(--mono); font-size:.92em}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <div class="brand">STA<span>PLE</span></div>
+    <div class="navlinks">
+      <a href="#motivation">Motivation</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#recipe">Recipe</a>
+      <a href="#results">Results</a>
+      <a href="#systems">Efficiency</a>
+      <a href="#ablation">Analysis</a>
+      <a href="#interpret">Interpretability</a>
+      <a href="#bibtex">BibTeX</a>
+    </div>
+    <button class="themebtn" id="themebtn" title="Toggle light / dark" aria-label="Toggle light / dark">◐</button>
+  </div>
+</nav>
+
+<header>
+  <div class="wrap">
+    <h1 class="title"><span class="kw">STAPLE</span>: Static Sparse Upcycling of<br>Pretrained Checkpoints via Embedding Modules</h1>
+    <div class="authors">
+      Ranajoy Sadhukhan<sup>†</sup>,
+      Euijin Hong<sup>†</sup>,
+      Sheng Cao<sup>¶</sup>,
+      Zechun Liu<sup>§</sup>,
+      Shuowei Jin<sup>‡</sup>,
+      Sha Li<sup>‡</sup>,
+      Changlong Yu<sup>‡</sup>,
+      Xin Liu<sup>‡</sup>,
+      Qin Lu<sup>‡</sup>,
+      Zhenyu Shi<sup>‡</sup>,
+      Priyanka Nigam<sup>‡</sup>,
+      Beidi Chen<sup>†</sup>
+    </div>
+    <div class="affil">
+      <sup>†</sup> Carnegie Mellon University <span class="sep">·</span>
+      <sup>¶</sup> D. E. Shaw Research <span class="sep">·</span>
+      <sup>§</sup> Meta AI <span class="sep">·</span>
+      <sup>‡</sup> Amazon Research
+    </div>
+    <div class="corr">Correspondence: <a href="mailto:rsadhukh@andrew.cmu.edu">rsadhukh@andrew.cmu.edu</a></div>
+
+    <div class="btnrow">
+      <a class="btn primary" href="https://arxiv.org/abs/2610.12599">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+        Paper
+      </a>
+      <a class="btn" href="https://github.com/Infini-AI-Lab/STAPLE">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.73.5.5 5.73.5 12a11.5 11.5 0 0 0 7.86 10.92c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.54-3.88-1.54-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.2 1.77 1.2 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.8 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.12 3.05.74.81 1.18 1.84 1.18 3.1 0 4.43-2.69 5.4-5.25 5.69.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 23.5 12C23.5 5.73 18.27.5 12 .5z"/></svg>
+        Code
+      </a>
+      <!-- TODO: replace href="#" with the Hugging Face model URL once the weights are up. -->
+      <a class="btn" href="#">
+        <span class="hf" aria-hidden="true">🤗</span>
+        Hugging Face
+      </a>
+      <a class="btn" href="#bibtex">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        BibTeX
+      </a>
+    </div>
+  </div>
+</header>
+
+<!-- ================= TEASER ================= -->
+<section id="teaser" style="padding-top:56px">
+  <div class="wrap">
+    <div class="figgrid c3 teaser">
+      <div>
+        <div class="panel-label">(a) Sample efficiency</div>
+        <div class="frame"><img src="static/images/mmlu_token_efficiency.png" alt="MMLU accuracy versus training tokens for the dense OLMo-2 1B baseline, upcycled STEM and STAPLE. STAPLE runs above the baseline from early in training and ends near 0.51; upcycled STEM stays below the baseline throughout."></div>
+      </div>
+      <div>
+        <div class="panel-label">(b) Scalability</div>
+        <div class="frame"><img src="static/images/scaling_axes.png" alt="Average downstream score versus total parametric capacity. Dense: 1.074B parameters, 44.39. STAPLE L=12, r=512: 1.741B, 44.97. STAPLE L=4: 4.362B, 45.10. STAPLE L=12 full: 10.939B, 45.59. Arrows mark the two scaling axes, embedding rank and number of STAPLE layers."></div>
+      </div>
+      <div>
+        <div class="panel-label">(c) Comparative analysis</div>
+        <div class="frame"><img src="static/images/radar_domains.png" alt="Radar chart of domain averages normalized to the dense baseline for Baseline, Engram, MoE (E8G1T1), STEM (L=12) and STAPLE (L=12) across commonsense, knowledge, discrete reasoning, math and code. STAPLE extends furthest on code."></div>
+      </div>
+    </div>
+    <figcaption>
+      <b>(a)</b> STAPLE improves over the dense baseline early in training, while replacement-style STEM upcycling stays below it despite additional training.
+      <b>(b)</b> Average downstream performance improves as static sparse capacity grows along either axis &mdash; more embedding-augmented layers <span class="mono">L</span>, or a larger embedding rank <span class="mono">r</span>.
+      <b>(c)</b> Domain averages normalized to continued dense training. The largest gain is in code, with smaller gains in mathematics, knowledge and reading comprehension.
+    </figcaption>
+  </div>
+</section>
+
+<!-- ================= TL;DR ================= -->
+<section id="tldr">
+  <div class="wrap narrow">
+    <div class="tldr">
+      <h3>TL;DR</h3>
+      <p><strong>STAPLE</strong> is a step toward <strong>continually scaling the capabilities of existing language models</strong> at minimal cost to <em>serving efficiency</em>, <em>memory and energy footprint</em>, and <em>training resources</em>.</p>
+      <p>Concretely, it is a recipe for adding static sparse memory to an already pretrained model. It builds on <a href="https://infini-ai-lab.github.io/STEM/">STEM</a>, which replaces each FFN up-projection with a token-indexed embedding table; STAPLE instead retains the up-projections and adds zero-initialized embeddings alongside them. This carries the seed model's knowledge over intact and lets the embeddings learn complementary knowledge at scale, rather than relearning what the model already knows.</p>
+      <p>On OLMo-2 1B, STAPLE improves over continued dense training across math, code, discrete reasoning and knowledge-intensive tasks, with gains of <strong>+4.27 on HumanEval, +2.80 on MBPP, +2.27 on GSM8K and +1.65 on DROP</strong>. Performance grows with static capacity, and the gains persist on OLMo-2 7B. STAPLE outperforms the static sparse baselines STEM and an Engram-style model, and achieves a higher average score than an MoE upcycling baseline while <strong>decoding 2&times; faster with less than half its GPU model memory and energy per token</strong>.</p>
+      <p>Billions of parameters added late in training cost almost nothing to run: with the tables offloaded to host memory, STAPLE stays <strong>within 1.5% of dense decode throughput and 3% of dense training throughput</strong>, with only the embeddings of the ~5% most frequent tokens cached on the GPU for inference.</p>
+      <p>Because every row is addressed by a token id, the added memory is also <strong>interpretable and editable</strong>: swapping a single embedding row (e.g. <span class="mono">maximum</span> for <span class="mono">minimum</span>) flips the model's answer, while consistent in-context evidence can still override the edit, demonstrating the model's flexibility to follow context. <a href="#interpret">&rarr;&nbsp;Interpretability</a></p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= MOTIVATION ================= -->
+<section id="motivation">
+  <div class="wrap">
+    <div class="narrow">
+      <div class="kicker">Motivation</div>
+      <h2>New Scaling Axis for Sparse Upcycling</h2>
+      <p class="lede">Scaling a model usually means pretraining a bigger one from scratch. Upcycling promises something cheaper: reuse the compute already spent on a dense checkpoint and further enhance its parametric capacity. Today that almost always means Mixture-of-Experts &mdash; and MoE upcycling is caught between two failure modes.</p>
+
+      <p>Most MoE upcycling initializes new experts by cloning the dense FFN. That preserves the seed model at initialization, but cloned experts can remain functionally similar, so further expert scaling buys less than its parameter count suggests. Breaking this <em>expert homogeneity</em> &mdash; with domain-specialized branches, partial re-initialization or extra optimization stages &mdash; improves specialization at the cost of a larger training budget or additional training stages. On top of that, MoE brings a systems bill: routing, load balancing, expert fragmentation, HBM-resident expert memory and communication overhead in both training and serving.</p>
+
+      <p>We think a good sparse upcycling method has to satisfy three requirements at once:</p>
+    </div>
+
+    <div class="cards">
+      <div class="card">
+        <div class="ico">◇</div>
+        <h4>Sample efficiency</h4>
+        <p>It must realize the performance gains of an equivalently scaled model trained from scratch, within a <em>limited</em> training budget.</p>
+      </div>
+      <div class="card">
+        <div class="ico">◈</div>
+        <h4>Scalability</h4>
+        <p>Adding more sparse parametric memory should keep paying off, rather than saturating after the first increment.</p>
+      </div>
+      <div class="card">
+        <div class="ico">◆</div>
+        <h4>System efficiency</h4>
+        <p>The added capacity must not impose serious compute, memory or communication overhead at train or serve time.</p>
+      </div>
+    </div>
+
+    <div class="narrow">
+      <h3>Why static, token-indexed memory</h3>
+      <p>Embedding-based static sparsity expands capacity through <em>deterministic</em> token- or phrase-indexed lookups. Unlike cloned MoE experts, token-indexed rows receive updates from distinct token-conditioned subsets of the training data, providing a structural bias toward differentiation. And because access is predictable from the token id alone, large tables can be offloaded to host DRAM and prefetched off the critical path.</p>
+      <p>But static sparse <em>upcycling</em> brings its own challenges. Replacing pretrained computation with freshly initialized memory throws away features that must then be relearned. Each embedding row is only updated when its token appears, so under a limited token budget the new parameters receive highly non-uniform training signals. And even with those problems solved, it is not obvious that adding more static capacity keeps paying off. Three findings address these concerns:</p>
+      <ul class="tight">
+        <li><b>Sparsity should complement the existing architecture.</b> Keeping the pretrained FFN up-projection and adding static memory as a residual pathway works far better than replacing it, as STEM does. <a href="#architecture">&rarr;&nbsp;Architecture</a></li>
+        <li><b>Initialize for sample-efficient adaptation.</b> Zero-initialization preserves the seed model exactly, and a short warmup with selectively frozen pretrained components pushes the embeddings to learn complementary knowledge. <a href="#recipe">&rarr;&nbsp;Recipe</a></li>
+        <li><b>Static memory scales.</b> Average performance keeps improving as layers or embedding rank are added, while the extra memory stays largely offloaded to the CPU. <a href="#scaling">&rarr;&nbsp;Scaling</a></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ================= ARCHITECTURE ================= -->
+<section id="architecture">
+  <div class="wrap">
+    <div class="narrow">
+      <div class="kicker">Architecture</div>
+      <h2>Add, don't replace</h2>
+      <p class="lede">One design decision separates STAPLE from its predecessor, STEM: the pretrained up projection stays in the graph, and the token-indexed memory is summed into it.</p>
+
+      <p>All three variants share the same gated FFN skeleton and differ only in what feeds the feature stream &mdash; the second operand of the elementwise product:</p>
+      <div class="eqbox">
+        $$
+        \begin{aligned}
+          y^{\mathrm{dense}}_\ell  &= W^d_\ell\Big( \mathrm{SiLU}(W^g_\ell x_\ell) \;\odot\; \class{eqhl}{W^u_\ell x_\ell} \Big)
+            && \text{gated FFN of the seed model} \\[7pt]
+          y^{\mathrm{STEM}}_\ell   &= W^d_\ell\Big( \mathrm{SiLU}(W^g_\ell x_\ell) \;\odot\; \class{eqhl}{U_\ell[t]} \Big)
+            && \text{replaces the feature stream} \\[7pt]
+          y^{\mathrm{STAPLE}}_\ell &= W^d_\ell\Big( \mathrm{SiLU}(W^g_\ell x_\ell) \;\odot\; \class{eqhl}{\big( W^u_\ell x_\ell + U_\ell[t] \big)} \Big)
+            && \text{adds to it}
+        \end{aligned}
+        $$
+      </div>
+
+      <p><strong>STEM</strong> swaps the pretrained up projection for a token-indexed lookup from a layer-local table $U_\ell \in \mathbb{R}^{V \times d_\mathrm{ff}}$, so the feature stream depends on the token id $t$ rather than the hidden state. <strong>STAPLE</strong> keeps $W^u_\ell$ and adds that lookup on top of it as a residual.</p>
+
+      <p>With $U_\ell$ zero-initialized, the upcycled model is <em>exactly</em> the seed model at step 0. Nothing is disrupted, no performance has to be recovered, and every gradient the table receives goes toward information the dense pathway does not already carry.</p>
+    </div>
+
+    <figure class="narrow">
+      <div class="frame" style="padding:22px">
+        <svg viewBox="0 0 940 330" width="100%" style="max-width:900px" role="img" aria-label="Diagram of a STAPLE layer: the token id indexes a host-resident STEM table whose row is added to the up projection output, then multiplied by the SiLU-gated stream and passed through the down projection.">
+          <defs>
+            <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+              <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-3)"/>
+            </marker>
+            <marker id="aha" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+              <path d="M0 0 L10 5 L0 10 z" fill="var(--accent)"/>
+            </marker>
+          </defs>
+          <style>
+            .bx{fill:var(--card); stroke:var(--line); stroke-width:1.5; rx:11}
+            .bxd{fill:var(--paper); stroke:var(--ink-3); stroke-width:1.5; stroke-dasharray:5 4; rx:11}
+            .bxa{fill:var(--accent-soft); stroke:var(--accent); stroke-width:1.5; rx:11}
+            .t{font:600 14px var(--sans); fill:var(--ink); text-anchor:middle}
+            .ts{font:500 11.5px var(--sans); fill:var(--ink-3); text-anchor:middle}
+            .ta{font:600 14px var(--sans); fill:var(--accent); text-anchor:middle}
+            .ln{stroke:var(--ink-3); stroke-width:1.6; fill:none; marker-end:url(#ah)}
+            .lna{stroke:var(--accent); stroke-width:1.9; fill:none; marker-end:url(#aha)}
+            .op{fill:var(--card); stroke:var(--ink-2); stroke-width:1.6}
+            .opt{font:600 16px var(--sans); fill:var(--ink); text-anchor:middle; dominant-baseline:central}
+          </style>
+
+          <!-- inputs -->
+          <text class="ts" x="52" y="86">hidden state</text>
+          <text class="t"  x="52" y="106" style="font-size:16px">x<tspan font-size="11" dy="4">ℓ</tspan></text>
+          <text class="ts" x="52" y="256">token id</text>
+          <text class="ta" x="52" y="276" style="font-size:16px">t</text>
+
+          <!-- gate branch -->
+          <path class="ln" d="M52 92 V44 H150"/>
+          <rect class="bx" x="152" y="22" width="118" height="44"/>
+          <text class="t" x="211" y="50">W<tspan font-size="10" dy="-5">g</tspan><tspan font-size="11" dy="9">ℓ</tspan> x</text>
+          <path class="ln" d="M270 44 H320"/>
+          <rect class="bx" x="322" y="22" width="92" height="44"/>
+          <text class="t" x="368" y="50">SiLU</text>
+          <path class="ln" d="M414 44 H612 V138"/>
+
+          <!-- up branch -->
+          <path class="ln" d="M52 112 V160 H150"/>
+          <rect class="bx" x="152" y="138" width="118" height="44"/>
+          <text class="t" x="211" y="166">W<tspan font-size="10" dy="-5">u</tspan><tspan font-size="11" dy="9">ℓ</tspan> x</text>
+          <path class="ln" d="M270 160 H452"/>
+
+          <!-- stem table -->
+          <path class="lna" d="M52 262 H150"/>
+          <rect class="bxa" x="152" y="228" width="196" height="66"/>
+          <text class="ta" x="250" y="254">U<tspan font-size="11" dy="4">ℓ</tspan><tspan dy="-4">[t]</tspan>  ·  STEM table</text>
+          <text class="ts" x="250" y="276" style="fill:var(--accent)">V × d_ff  ·  zero-init  ·  host DRAM</text>
+          <path class="lna" d="M348 262 H478 V184"/>
+
+          <!-- plus -->
+          <circle class="op" cx="478" cy="160" r="19"/>
+          <text class="opt" x="478" y="160">+</text>
+          <path class="ln" d="M497 160 H612"/>
+
+          <!-- odot -->
+          <circle class="op" cx="612" cy="160" r="19"/>
+          <text class="opt" x="612" y="160">⊙</text>
+          <path class="ln" d="M631 160 H700"/>
+
+          <!-- down -->
+          <rect class="bx" x="702" y="138" width="118" height="44"/>
+          <text class="t" x="761" y="166">W<tspan font-size="10" dy="-5">d</tspan><tspan font-size="11" dy="9">ℓ</tspan></text>
+          <path class="ln" d="M820 160 H878"/>
+          <text class="t" x="898" y="166" style="font-size:16px">y<tspan font-size="11" dy="4">ℓ</tspan></text>
+
+          <!-- annotations -->
+          <text class="ts" x="368" y="86">context-dependent gating stream</text>
+          <text class="ts" x="330" y="204">pretrained feature stream — kept</text>
+          <text class="ts" x="250" y="312" style="fill:var(--accent)">token-indexed residual memory — added</text>
+        </svg>
+      </div>
+      <figcaption><b>A STAPLE layer.</b> The gate and down projections are untouched. The pretrained up projection keeps producing its feature stream; the token-indexed STEM row is summed into it. At initialization $U_\ell = 0$, so the layer is bit-for-bit the pretrained FFN. Because the row is addressed by the token id alone &mdash; available before any hidden state is computed &mdash; the table can sit in CPU DRAM and be prefetched asynchronously.</figcaption>
+    </figure>
+
+    <div class="narrow">
+      <details class="disclose">
+        <summary>
+          <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>
+          <h3>Why replacement fails as an upcycling recipe</h3>
+        </summary>
+        <div class="body">
+          <p>The replacement-style STEM layer is a strong architecture when trained from scratch, but it makes a poor upcycling target. Token-indexed embeddings only receive updates when their tokens appear, so they already get highly non-uniform training signals under a limited budget. Replacement compounds that by deleting the pretrained up projection, a dense component that already encodes useful shared computation, which the new embeddings must then relearn. It also lacks a straightforward function-preserving initialization: with the up projection gone, zero-init is not an option, and random, token-wise mean, principal-component and transformed input-embedding initializations all failed to improve long-term performance in our experiments.</p>
+          <p>Empirically, upcycled STEM stays below continued dense training even after 100B tokens (<a href="#teaser">teaser (a)</a>). With 12 embedding layers it averages 39.94 against the dense baseline's 44.39, with the largest drops on knowledge tasks and GSM8K (<a href="#results">Results</a>).</p>
+        </div>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- ================= RECIPE ================= -->
+<section id="recipe">
+  <div class="wrap">
+    <div class="narrow">
+      <div class="kicker">Recipe</div>
+      <h2>Zero-init, warm up, then scale</h2>
+      <p class="lede">Three ingredients turn "add an embedding table" into a method that actually beats continued dense training.</p>
+    </div>
+
+    <div class="pipe">
+      <div class="step">
+        <div class="t">Step 1</div>
+        <h4>Zero-initialize</h4>
+        <p>Every STEM table starts at zero, so the upcycled model reproduces the seed checkpoint's computation graph exactly and keeps the knowledge already in its weights.</p>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step">
+        <div class="t">Step 2</div>
+        <h4>Warm up on pretraining data</h4>
+        <p>100B tokens drawn from a 2.5% subset of DCLM, with the augmented layers' up projections <em>frozen</em>. The seed model already fits this corpus, so the new tables are pushed to learn complementary signal.</p>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step">
+        <div class="t">Step 3</div>
+        <h4>Mid-train on the high-quality mix</h4>
+        <p>100B tokens of the Dolma 3 Dolmino mix. The STEM embeddings use a 4&times; larger peak learning rate than the dense parameters, and every group decays linearly to zero.</p>
+      </div>
+    </div>
+
+    <div class="narrow">
+      <p style="margin-top:34px">Warmup matters, but selectively. Brief exposure to the pretraining distribution consistently improves MMLU and average commonsense reasoning over direct upcycling throughout mid-training, suggesting the token-indexed tables pick up useful general-purpose memory before adapting to the mid-training mix. It gives <em>no</em> consistent gain on math and code &mdash; and we deliberately excluded math and code sources from the warmup mixture to control this comparison. That asymmetry is informative: the static memory stays responsive to the mid-training distribution and can learn capabilities that warmup did not emphasize.</p>
+    </div>
+
+    <figure>
+      <div class="figgrid c3">
+        <div>
+          <div class="panel-label">Commonsense reasoning</div>
+          <div class="frame"><img src="static/images/ablation_commonsense.png" alt="Average commonsense reasoning versus training tokens for upcycled STEM, STAPLE, and STAPLE without warmup. STAPLE leads for most of training; upcycled STEM trails both STAPLE variants."></div>
+        </div>
+        <div>
+          <div class="panel-label">Math &amp; code</div>
+          <div class="frame"><img src="static/images/ablation_math_code.png" alt="Average of GSM8K and MBPP versus training tokens for upcycled STEM, STAPLE, and STAPLE without warmup. The two STAPLE variants track each other closely; upcycled STEM sits below them."></div>
+        </div>
+        <div>
+          <div class="panel-label">MMLU</div>
+          <div class="frame"><img src="static/images/ablation_mmlu.png" alt="MMLU accuracy versus training tokens for upcycled STEM, STAPLE, and STAPLE without warmup. STAPLE is highest throughout, STAPLE without warmup is in the middle, and upcycled STEM is lowest."></div>
+        </div>
+      </div>
+      <figcaption><b>Domain-specific comparison of STEM upcycling, STAPLE and STAPLE without warmup</b>, each with 4 STEM embedding layers. Retaining the FFN up projection matters: STAPLE consistently outperforms STEM in every domain. Warmup improves general knowledge and commonsense reasoning, while math and code reasoning are relatively unaffected by it.</figcaption>
+    </figure>
+
+    <div class="narrow">
+      <h3 id="scaling">Two scaling axes</h3>
+      <p>We scale STAPLE along two axes: the number of embedding-augmented layers $L$ and the embedding dimension $r$. Under the same continued-training budget, going from 4 to 12 augmented layers raises the average downstream score from 45.10 to 45.59. The gains include reasoning-heavy tasks &mdash; MBPP improves by 1.80 points, HumanEval by 1.83 and DROP by 0.73 &mdash; while MMLU is essentially unchanged (51.27 vs. 51.21).</p>
+      <p>We place the tables in the early decoder layers (1&ndash;12), so that token-specific residuals are integrated into representations that every subsequent layer processes.</p>
+      <p>The second axis is the capacity of each table. Replacing the full-rank table $U_\ell \in \mathbb{R}^{V \times d_\mathrm{ff}}$ with a rank-$r$ table $U^{(r)}_\ell \in \mathbb{R}^{V \times r}$ plus a learned projection $P_\ell \in \mathbb{R}^{d_\mathrm{ff} \times r}$ gives a continuous capacity knob:</p>
+      <div class="eqbox">
+        $$ y^{\mathrm{STAPLE}(r)}_\ell = W^d_\ell\Big( \mathrm{SiLU}(W^g_\ell x_\ell) \;\odot\; \big( W^u_\ell x_\ell + P_\ell\,U^{(r)}_\ell[t] \big) \Big) $$
+      </div>
+      <p>The module has $Vr + d_\mathrm{ff}r$ parameters per layer and adds $2d_\mathrm{ff}r$ projection FLOPs per token. For OLMo-2 1B, $r=512$ shrinks the token-indexed table by $16\times$. At $L=12$ this low-rank variant reaches a 44.97 average, against 45.59 for full-rank STAPLE and 44.39 for dense continuation &mdash; so STAPLE benefits from scaling both the number of augmented layers and the capacity of each table.</p>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr class="grouphdr">
+            <th></th>
+            <th colspan="4">Commonsense</th>
+            <th>Knowledge</th>
+            <th>RC</th>
+            <th colspan="2">Math</th>
+            <th colspan="2">Code</th>
+            <th></th>
+          </tr>
+          <tr>
+            <th>Method</th>
+            <th>ARC-E</th><th>ARC-C</th><th>HSwag</th><th>WinoG</th>
+            <th>MMLU</th><th>DROP</th>
+            <th>GSM8K</th><th>MATH</th>
+            <th>MBPP</th><th>HEval</th>
+            <th>Avg.</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="base"><td>Dense baseline</td><td>75.42</td><td class="best">47.44</td><td>65.18</td><td class="best">66.22</td><td>50.30</td><td>41.91</td><td>37.76</td><td class="best">7.68</td><td>28.80</td><td>23.17</td><td>44.39</td></tr>
+          <tr><td>STAPLE (<i>L</i>=4)</td><td class="best">76.98</td><td>46.25</td><td>66.00</td><td>65.82</td><td class="best">51.27</td><td>42.83</td><td>39.35</td><td>7.08</td><td>29.80</td><td>25.61</td><td>45.10</td></tr>
+          <tr class="hero"><td>STAPLE (<i>L</i>=12)</td><td>76.60</td><td>45.99</td><td class="best">68.27</td><td>63.77</td><td>51.21</td><td class="best">43.56</td><td class="best">40.03</td><td>7.44</td><td class="best">31.60</td><td class="best">27.44</td><td class="best">45.59</td></tr>
+          <tr><td>STAPLE (<i>L</i>=12, <i>r</i>=512)</td><td>76.18</td><td>46.67</td><td>66.99</td><td>65.59</td><td>50.49</td><td>41.91</td><td>39.80</td><td>6.28</td><td>30.20</td><td>25.61</td><td>44.97</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tnote"><b>STAPLE scalability on OLMo-2 1B.</b> The number of augmented layers <i>L</i> and the embedding dimension <i>r</i> are separate capacity axes; <i>r</i>=512 is the low-rank variant, and the other STAPLE rows use full-width embeddings. All rows use the same continued-training budget. Bold marks the best value in each column.</p>
+  </div>
+</section>
+
+<!-- ================= RESULTS ================= -->
+<section id="results">
+  <div class="wrap">
+    <div class="narrow">
+      <div class="kicker">Results</div>
+      <h2>Performance Improvement across both Knowledge and Reasoning-intensive tasks</h2>
+      <p class="lede">Large parametric memory is usually associated with memorization, yet STAPLE's gains extend to reasoning-heavy tasks: code, math and discrete reasoning.</p>
+      <p>All OLMo-2 1B models start from the same checkpoint with the same budget: 100B warmup tokens plus 100B mid-training tokens on the Dolma 3 Dolmino mix. For a fair compute comparison, the dense baseline continues training on the same number of tokens under the original pretraining learning-rate schedule.</p>
+
+      <details class="disclose">
+        <summary>
+          <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>
+          <h3>Experimental setup</h3>
+        </summary>
+        <div class="body">
+          <ul class="tight">
+            <li><b>Seed model.</b> OLMo-2 1B, chosen because its training recipe, datasets and optimizer-state checkpoints are public. The released checkpoint has 16 decoder layers and was pretrained on 4T tokens. STAPLE variants augment the early decoder layers with 4 or 12 STEM tables, all zero-initialized.</li>
+            <li><b>Engram-style baseline.</b> A single-stream Engram-style model on the same backbone, with memory modules at layers 2 and 7: hashed 2-gram and 3-gram memories with eight 64-dimensional heads per order, about 9.87B embedding parameters (matched to STAPLE-12L), context-conditioned key/value projections with sigmoid gating and a depthwise causal convolution. It omits Engram's multi-branch hyper-connections.</li>
+            <li><b>MoE baseline.</b> A relatively serving-efficient MoE upcycling that replaces the FFNs in eight interleaved decoder layers with MoE layers of eight full-width experts and top-1 routing.</li>
+            <li><b>Data.</b> Warmup uses 100B tokens sampled from a 2.5% subset of DCLM Baseline 1.0. The original pretraining corpus includes a small fraction of code and math, but those sources are left out of warmup to isolate its effect. Mid-training uses the Dolma 3 Dolmino mix of web, non-web and synthetic sources, designed to improve academic QA, math and programming.</li>
+            <li><b>Training.</b> Dense parameters follow the OLMo-2 1B hyperparameters, with the optimizer initialized from the released optimizer states. The STEM embeddings use a 4&times; larger mid-training peak learning rate, and all groups decay linearly to zero. Up-projections in the augmented layers are frozen during warmup; when the warmup stage is omitted, the embedding schedule instead gets a 2% warmup ratio. The 7B runs use about 30B warmup plus 70B mid-training tokens.</li>
+            <li><b>Evaluation.</b> ARC-Easy, WinoGrande and MMLU: 0-shot accuracy. ARC-Challenge and HellaSwag: 0-shot normalized accuracy. DROP: 3-shot F1. GSM8K: 5-shot strict exact match. MATH: 0-shot exact match. MBPP: 5-shot pass@1. HumanEval: 0-shot pass@1.</li>
+          </ul>
+          <div class="tablewrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Parameter group</th><th>Steps</th><th>Warmup steps</th><th>Resume &rarr; end step</th>
+                  <th>Schedule</th><th>Peak LR</th><th>Min LR ratio</th><th>Weight decay</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="sub"><td colspan="8">Warmup</td></tr>
+                <tr><td>STEM / STAPLE tables</td><td>50,000</td><td>500</td><td>0 &rarr; 50,000</td><td>cosine</td><td>4&times;10<sup>&minus;4</sup></td><td>0.6</td><td>1&times;10<sup>&minus;4</sup></td></tr>
+                <tr><td>Engram n-gram tables</td><td>50,000</td><td>500</td><td>0 &rarr; 50,000</td><td>cosine</td><td>4&times;10<sup>&minus;4</sup></td><td>0.6</td><td>1&times;10<sup>&minus;4</sup></td></tr>
+                <tr><td>Backbone</td><td>50,000</td><td>0</td><td>1,907,359 &rarr; 2,384,186</td><td>cosine</td><td>4&times;10<sup>&minus;4</sup></td><td>0.1</td><td>1&times;10<sup>&minus;1</sup></td></tr>
+                <tr><td>MoE expert weights</td><td>50,000</td><td>500</td><td>0 &rarr; 50,000</td><td>cosine</td><td>2&times;10<sup>&minus;4</sup></td><td>0.91</td><td>1&times;10<sup>&minus;1</sup></td></tr>
+                <tr class="sub"><td colspan="8">Mid-training</td></tr>
+                <tr><td>STEM / STAPLE tables</td><td>50,000</td><td>0</td><td>0 &rarr; 50,000</td><td>linear</td><td>3&times;10<sup>&minus;4</sup></td><td>0</td><td>1&times;10<sup>&minus;4</sup></td></tr>
+                <tr><td>Engram n-gram tables</td><td>50,000</td><td>0</td><td>0 &rarr; 50,000</td><td>linear</td><td>3&times;10<sup>&minus;4</sup></td><td>0</td><td>1&times;10<sup>&minus;4</sup></td></tr>
+                <tr><td>Backbone</td><td>50,000</td><td>0</td><td>0 &rarr; 50,000</td><td>linear</td><td>7.44&times;10<sup>&minus;5</sup></td><td>0</td><td>1&times;10<sup>&minus;1</sup></td></tr>
+                <tr><td>MoE expert weights</td><td>50,000</td><td>0</td><td>0 &rarr; 50,000</td><td>linear</td><td>2&times;10<sup>&minus;4</sup></td><td>0</td><td>1&times;10<sup>&minus;1</sup></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="tnote">All stages use sequence length 4096 and batch size 512. The backbone warmup schedule resumes the base model's pretraining cosine schedule at its final checkpoint. MoE expert weights follow the backbone schedule at a higher peak learning rate.</p>
+        </div>
+      </details>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr class="grouphdr">
+            <th></th>
+            <th colspan="4">Commonsense</th>
+            <th>Knowledge</th>
+            <th>RC</th>
+            <th colspan="2">Math</th>
+            <th colspan="2">Code</th>
+            <th></th>
+          </tr>
+          <tr>
+            <th>Method</th>
+            <th>ARC-E</th><th>ARC-C</th><th>HSwag</th><th>WinoG</th>
+            <th>MMLU</th><th>DROP</th>
+            <th>GSM8K</th><th>MATH</th>
+            <th>MBPP</th><th>HEval</th>
+            <th>Avg.</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="sub"><td colspan="12">OLMo-2 1B &mdash; baselines and architecture comparison</td></tr>
+          <tr class="base"><td>Dense baseline</td><td>75.42</td><td class="best">47.44</td><td>65.18</td><td class="best">66.22</td><td>50.30</td><td>41.91</td><td>37.76</td><td>7.68</td><td>28.80</td><td>23.17</td><td>44.39</td></tr>
+          <tr><td>MoE upcycling (8 experts, top-1)</td><td>75.04</td><td>45.73</td><td>66.82</td><td>64.72</td><td>49.96</td><td>40.74</td><td>39.80</td><td>7.64</td><td>28.00</td><td class="best">28.05</td><td>44.65</td></tr>
+          <tr><td>Engram-style</td><td class="best">77.40</td><td>47.35</td><td>66.05</td><td>64.01</td><td>50.98</td><td>41.68</td><td>38.21</td><td class="best">8.44</td><td>29.20</td><td>24.39</td><td>44.77</td></tr>
+          <tr><td>STEM (<i>L</i>=12)</td><td>74.37</td><td>42.06</td><td>60.79</td><td>61.56</td><td>44.30</td><td>37.00</td><td>26.00</td><td>6.94</td><td>22.60</td><td>23.78</td><td>39.94</td></tr>
+          <tr class="hero"><td>STAPLE (<i>L</i>=12)</td><td>76.60</td><td>45.99</td><td class="best">68.27</td><td>63.77</td><td class="best">51.21</td><td class="best">43.56</td><td class="best">40.03</td><td>7.44</td><td class="best">31.60</td><td>27.44</td><td class="best">45.59</td></tr>
+
+          <tr class="sub"><td colspan="12">OLMo-2 7B backbone &mdash; 30B warmup + 70B mid-training tokens</td></tr>
+          <tr class="base"><td>Dense baseline</td><td>82.07</td><td>55.97</td><td>77.52</td><td class="best">74.82</td><td>62.53</td><td>62.79</td><td>67.79</td><td>11.08</td><td>41.80</td><td>34.76</td><td>57.11</td></tr>
+          <tr class="hero"><td>STAPLE (<i>L</i>=16)</td><td class="best">82.58</td><td class="best">57.76</td><td class="best">77.62</td><td>74.35</td><td class="best">62.67</td><td class="best">63.55</td><td class="best">70.13</td><td class="best">12.02</td><td class="best">43.40</td><td class="best">35.98</td><td class="best">58.01</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tnote"><i>L</i> = number of STEM embedding layers. The Engram-style baseline's added embedding memory is parameter-matched to STAPLE-12L; the replacement-style STEM and additive STAPLE models both use 12 embedding layers. Bold marks the best value within each backbone block. Evaluation settings are listed under <i>Experimental setup</i> above.</p>
+
+    <div class="narrow">
+      <h3>What stands out</h3>
+      <ul class="tight">
+        <li><b>Reasoning, not just recall.</b> STAPLE-12L raises the ten-task average from 44.39 to 45.59 over continued dense training, and the biggest gains are on reasoning-heavy tasks: HumanEval +4.27, MBPP +2.80, GSM8K +2.27 and DROP +1.65.</li>
+        <li><b>Replacement doesn't work for upcycling.</b> Under the same budget, STEM does not even match continued dense training (39.94 average), with notable drops on knowledge tasks and GSM8K. Retaining the pretrained model's computation graph is what makes static memory pay off.</li>
+        <li><b>Better than a parameter-matched static memory.</b> STAPLE achieves higher domain-average math and code scores and higher DROP performance than the parameter-matched Engram-style baseline, supporting the effectiveness of its architecture and adaptation recipe.</li>
+        <li><b>Better than MoE upcycling, for less.</b> STAPLE scores 0.94 points above the MoE baseline on average while decoding 2.04&times; faster with about 54% less GPU-resident model memory and 58% less energy per generated token (<a href="#systems">Efficiency</a>).</li>
+        <li><b>It transfers up.</b> On OLMo-2 7B, with the first 16 decoder layers augmented and a <em>reduced</em> budget (30B + 70B), STAPLE improves 9 of 10 tasks and lifts the average from 57.11 to 58.01 &mdash; math by 4.16% and code by 3.68% relative to the baseline. The modest MMLU gain may reflect the shorter warmup, consistent with the 1B warmup ablation.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ================= SYSTEMS ================= -->
+<section id="systems">
+  <div class="wrap">
+    <div class="narrow">
+      <div class="kicker">System efficiency</div>
+      <h2>Offloads embedding tables to CPU, yet matches dense training and serving cost</h2>
+      <p class="lede">STAPLE substantially increases the parametric memory footprint, but every row is addressed by token id. That predictable access pattern lets the large tables stay in CPU DRAM while only the needed rows move to the GPU &mdash; the challenge is hiding that transfer behind model computation.</p>
+    </div>
+
+    <figure>
+      <div class="figgrid syseff">
+        <div>
+          <div class="panel-label">(a) Training throughput and GPU memory</div>
+          <div class="frame"><img src="static/images/training_throughput.png" alt="Paired horizontal bar charts. Training throughput: dense OLMo-2 1B 117.0K tokens per second, STAPLE-4L 115.3K, STAPLE-12L 113.9K, MoE with 8 experts and 1 active 101.7K. GPU-resident fp32 weights plus AdamW state: 16.6 GiB for dense and both STAPLE variants, which additionally hold 30.6 GiB (4L) or 91.9 GiB (12L) in host DRAM, and 48.1 GiB for the MoE."></div>
+        </div>
+        <div>
+          <div class="panel-label">(b) Decode throughput</div>
+          <div class="frame"><img src="static/images/decode_throughput.png" alt="Bar chart of decode throughput at batch size 64: dense 35.2K tokens per second on 2.97 GB of weights, STAPLE-4L 35.1K and STAPLE-12L 34.7K on 2.97 GB plus a 1 GB cache, and MoE 17.0K on 8.61 GB. STAPLE-12L decodes 2.04 times faster than the MoE."></div>
+        </div>
+      </div>
+      <figcaption><b>Training and serving efficiency of host-offloaded STAPLE.</b> <b>(a)</b> Training throughput, and GPU-resident weights plus optimizer state; parameter counts include the STEM tables. STAPLE keeps its bf16 tables and fp32 AdamW moments in host DRAM (hatched), matching the dense GPU footprint, whereas the MoE baseline keeps all experts and their optimizer states on the GPU. <b>(b)</b> Decode throughput on one NVIDIA B200 at batch size 64 and context length 256, labeled with GPU memory for weights plus, for STAPLE, a 1&nbsp;GB cache of frequently accessed rows.</figcaption>
+    </figure>
+
+    <div class="narrow">
+      <h3>Inference-time offload</h3>
+      <p>Three complementary optimizations reduce retrieval overhead during serving:</p>
+    </div>
+
+    <div class="cards" style="margin-top:18px">
+      <div class="card">
+        <div class="ico">⇄</div>
+        <h4>Asynchronous prefetching</h4>
+        <p>Transfers for upcoming requests or prefill chunks overlap with the current computation. During decode, later-layer lookups overlap with earlier-layer execution.</p>
+      </div>
+      <div class="card">
+        <div class="ico">◱</div>
+        <h4>Frequency-aware caching</h4>
+        <p>Token frequencies are Zipfian, so caching 5&ndash;6% of the vocabulary gives roughly an 80% hit rate. That shrinks STAPLE-12L's GPU-resident embedding footprint from 19.73&nbsp;GB to a 1&nbsp;GB cache.</p>
+      </div>
+      <div class="card">
+        <div class="ico">≡</div>
+        <h4>Token deduplication</h4>
+        <p>Each distinct row is transferred only once per prefill batch, cutting the prefetch workload by roughly 50%. It is skipped during decode, where the deduplication overhead exceeds the savings.</p>
+      </div>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Architecture</th>
+            <th>HBM model memory</th>
+            <th>Linear FLOPs / token</th>
+            <th>Decode B1</th>
+            <th>Decode B64</th>
+            <th>Prefill B1</th>
+            <th>Prefill B64</th>
+            <th>Energy / token (decode B64)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="base"><td>Dense</td><td>2.97 GB weights</td><td>~2.56 G</td><td>1.224 ms / 817</td><td>1.817 ms / 35.2K</td><td>1.419 ms / 180.5K</td><td>34.184 ms / 479.3K</td><td>18.69 mJ</td></tr>
+          <tr class="hero"><td>STAPLE-12L</td><td>2.97 GB weights + 1 GB cache</td><td>~2.56 G</td><td>1.237 ms / 809</td><td>1.845 ms / 34.7K</td><td>1.524 ms / 168.0K</td><td>34.678 ms / 472.5K</td><td>18.92 mJ</td></tr>
+          <tr><td>STEM-12L</td><td>2.57 GB weights + 1 GB cache</td><td>~2.16 G</td><td>1.151 ms / 869</td><td>1.671 ms / 38.3K</td><td>1.413 ms / 181.1K</td><td>27.580 ms / 594.1K</td><td>&mdash;</td></tr>
+          <tr><td>MoE (8 experts, top-1)</td><td>8.61 GB weights, all 8 experts</td><td>~2.56 G + routing</td><td>1.951 ms / 513</td><td>3.761 ms / 17.0K</td><td>2.975 ms / 86.1K</td><td>36.179 ms / 452.9K</td><td>45.37 mJ</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tnote">One NVIDIA B200, context length 256. Latency / throughput in ms / tok&nbsp;s<sup>&minus;1</sup>. HBM memory includes resident weights and GPU caches. STAPLE-12L offloads 12 embedding tables (19.73&nbsp;GB in BF16) to CPU DRAM and keeps a 1&nbsp;GB GPU cache. The MoE baseline keeps all experts in HBM and incurs routing and token-reordering overhead. The serving stack uses CUDA graphs, a fused in-place KV-cache append kernel and FlashInfer for paged decode attention. Energy per generated token was measured with Zeus in a separate run on one otherwise idle B200 of a DGX B200 (dual Xeon Platinum 8570, PCIe Gen5&nbsp;&times;16 CPU&ndash;GPU links); three repeats per model agree within 1.5%. It was not measured for STEM-12L.</p>
+
+    <div class="narrow">
+      <p style="margin-top:26px">With 19.73&nbsp;GB of learned tables offloaded, STAPLE-12L's decode throughput stays within <b>1.0%</b> of dense at batch size 1 and <b>1.5%</b> at batch size 64. Relative to the MoE baseline, STAPLE uses <b>about 54% less HBM model memory</b> and improves decode throughput by <b>2.04&times; at batch size 64</b> and <b>58% at batch size 1</b>.</p>
+
+      <p>Beyond latency, energy per generated token captures the benefits of weight reuse across the batch, efficient dense kernels, and less background energy from shorter execution. In our throughput-oriented decoding evaluation (batch size 64), STAPLE-12L's measured energy per token is <b>18.92&nbsp;mJ</b>, about <b>1.2% above dense</b> (18.69&nbsp;mJ) and <b>58.3% below the MoE baseline</b> (45.37&nbsp;mJ). The CPU side adds very little: activity-based estimates put STAPLE's additional host-memory and PCIe transfer energy below 0.2% of the measured energy, and the CPU launch thread at roughly 1% for all three models, which leaves the comparison essentially unchanged.</p>
+
+      <h3>Training-time offload</h3>
+      <p>Training also needs gradients and optimizer states, which makes keeping the full tables on the GPU costly. But each step only touches the <em>distinct token ids</em> in its batch, $U = |\mathrm{uniq}(\mathcal{B})|$, rather than the full vocabulary $V$. With non-uniform token frequencies, typically $U \ll V$, and $U$ grows sublinearly with batch size.</p>
+    </div>
+
+    <div class="cards" style="margin-top:30px">
+      <div class="card">
+        <div class="ico">&#9636;</div>
+        <h4>Materialize only touched rows</h4>
+        <p>The full STEM tables and fp32 AdamW states stay in CPU DRAM; each step brings only the active $U \times d_\mathrm{ff}$ rows to the GPU. That compact buffer is the autograd leaf, so backward never allocates a dense $V \times d_\mathrm{ff}$ gradient, and a row-restricted AdamW updates only the accessed rows. We observe no degradation in end-to-end downstream task performance when training with these sparse optimizer updates.</p>
+      </div>
+      <div class="card">
+        <div class="ico">&#8649;</div>
+        <h4>Overlap with backbone compute</h4>
+        <p>Host gathers, host-to-device and device-to-host transfers, and optimizer work all overlap with backbone computation. Host work scales with $U$ while transformer compute scales with total tokens, so overlap gets easier at larger batches. Gradient staging is double-buffered, and next-step gathers are issued in forward consumption order.</p>
+      </div>
+      <div class="card">
+        <div class="ico">&#8862;</div>
+        <h4>Host-memory placement</h4>
+        <p>Sustaining host bandwidth takes care: table allocations are interleaved across NUMA memory controllers and optionally backed by huge pages, and the OpenMP worker pool idles passively so it does not compete with the GPU-launch thread.</p>
+      </div>
+    </div>
+
+    <div class="narrow">
+      <p style="margin-top:30px">The result: STAPLE-12L <b>trains within 3% of dense throughput</b> (113.9K vs. 117.0K tokens/s) with 91.9&nbsp;GiB of tables and optimizer moments in host DRAM. Its GPU-resident weights and optimizer state match the dense model, and the compact row buffers add only about 3% peak HBM. The MoE baseline trains 13% slower (101.7K tokens/s) and needs <b>2.9&times; the GPU memory</b> for weights and optimizer state.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= WHERE MEMORY LIVES ================= -->
+<section id="ablation">
+  <div class="wrap">
+    <div class="narrow">
+      <div class="kicker">Analysis</div>
+      <h2>Is the model actually using the memory?</h2>
+      <p class="lede">Two checks: are the learned embeddings <em>different</em> from the dense pathway, and does removing them hurt?</p>
+    </div>
+
+    <figure class="narrow">
+      <div class="frame"><img src="static/images/complementarity_cosine.png" alt="Density plots of cosine similarity between mean token-wise up-projection output and STEM embeddings at layers 1, 6 and 12, all concentrated near zero."></div>
+      <figcaption><b>The embeddings are near-orthogonal to the dense stream.</b> Pairwise cosine similarity between the mean token-wise up-projection output and the learned STEM embedding, at layers 1, 6 and 12 of STAPLE with 12 STEM tables. Medians of +0.025, +0.003 and &minus;0.087 &mdash; the memory is not re-deriving what $W^u_\ell$ already computes.</figcaption>
+    </figure>
+
+    <div class="split narrow">
+      <div>
+        <p>Low cosine similarity says the two feature streams occupy different directions, but geometry alone does not show the memory is useful. So we test the model's dependence on it directly: we remove the last 4, last 8 or all 12 embedding tables from a trained STAPLE-12L checkpoint at evaluation time, without retraining.</p>
+        <p>The ten-benchmark average falls from 45.59 to 41.28, 36.94 and 32.17. The model clearly relies on its learned static memory after mid-training. (The fully ablated model is not the original dense seed, since the remaining weights have co-adapted with the memory.)</p>
+        <p>The dependence is sharpest on math and code. Removing all tables lowers GSM8K, MBPP and HumanEval by 31.08, 27.40 and 23.17 points, compared with 7.34 on ARC-Challenge and 7.08 on MMLU. Removing only the last four already costs 17.59 points on GSM8K, 8.40 on MBPP and 8.54 on HumanEval. The deeper tables contribute most to generation-heavy math and programming, while knowledge-intensive tasks lean on the bottom-most layers.</p>
+      </div>
+      <figure>
+        <div class="frame"><img src="static/images/embedding_removal.png" alt="Line chart of score retained relative to the full model as 0, 4, 8 and 12 embedding tables are removed, starting from the topmost. ARC-Challenge and MMLU stay above 80 percent; GSM8K, MBPP and HumanEval fall below 25 percent; the ten-task average falls to about 70 percent."></div>
+        <figcaption><b>Removing embedding tables.</b> Benchmark-score retention after removing the last 4, 8 or all 12 tables from trained STAPLE-12L.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- ================= INTERPRETABILITY ================= -->
+<section id="interpret">
+  <div class="wrap">
+    <div class="narrow">
+      <div class="kicker">Interpretability</div>
+      <h2>Static memory meets contextual reasoning</h2>
+      <p class="lede">The removal ablations show that STAPLE relies on its memory, but not how that memory affects individual predictions. Swapping one token's embedding row &mdash; and nothing else &mdash; lets us find out.</p>
+      <p>Following STEM, we probe the memory with causal interventions. Each row of $U_\ell$ is selected only by the input token id, so substituting one token's row for another's changes the memory contribution without changing the input text: any change in the output is attributable to the embeddings. At the same time, STAPLE scales $U_\ell[t]$ by the context-dependent gate $\mathrm{SiLU}(W^g_\ell x_\ell)$, so the context may counteract a conflicting memory signal.</p>
+      <p>We test this on two tasks: finding the maximum of five numbers, and writing Python code that finds the maximum of an array. In both, we replace the STEM embedding for <span class="mono">maximum</span> with the one for <span class="mono">minimum</span>, and vary the number of correct demonstrations in the prompt.</p>
+    </div>
+
+    <div class="probe narrow">
+      <div class="row"><span class="lbl">Surface token</span> <code>maximum</code></div>
+      <div class="row"><span class="lbl">Swapped-in row</span> <code>minimum</code></div>
+      <div class="row"><span class="lbl">Changed</span> <span style="color:var(--ink-2);font-size:15px">one STEM embedding row &mdash; prompt text and dense weights untouched</span></div>
+    </div>
+
+    <figure>
+      <div class="figgrid c2">
+        <div>
+          <div class="panel-label">(a) Order statistics</div>
+          <div class="frame"><img src="static/images/intervention_maxmin.png" alt="Heatmap of probability over the five sorted numbers 12, 29, 47, 56 and 83 against the number of in-context demonstrations, with the maximum embedding swapped for minimum. With no demonstrations 0.93 goes to 12, the minimum; with four, 0.97 goes to 83, the maximum. A line shows the expected rank of the answer rising as demonstrations are added."></div>
+        </div>
+        <div>
+          <div class="panel-label">(b) Code generation</div>
+          <div class="frame"><img src="static/images/intervention_code.png" alt="Probability that the generated loop compares with less-than versus the number of worked examples in the prompt. With the word rewritten to min it stays between about 0.97 and 0.70; with the STEM row swapped to min it falls from 0.40 to about 0.11; the unmodified baseline stays near zero."></div>
+        </div>
+      </div>
+      <figcaption><b>Controlled embedding interventions</b>, with the STEM embedding for <span class="mono">maximum</span> swapped for that of <span class="mono">minimum</span>. <b>(a)</b> Probability over the five sorted candidates (heatmap) and expected answer rank (line) as correct demonstrations are added. <b>(b)</b> Probability that the generated maximum-finding loop compares with <span class="mono">&lt;</span> under the same swap, alongside the unmodified model and the instruction rewritten to <span class="mono">minimum</span>.</figcaption>
+    </figure>
+
+    <div class="narrow">
+      <p style="margin-top:30px"><b>Order statistics.</b> Without demonstrations, the swap overrides the instruction: the model assigns 0.93 probability to the minimum. Each demonstration shifts probability toward larger answers, and with four the model assigns 0.97 to the maximum.</p>
+      <p><b>Code generation.</b> The swap also changes the generated algorithm, since comparing with <span class="mono">&lt;</span> rather than <span class="mono">&gt;</span> turns the loop into a minimum finder. The probability of <span class="mono">&lt;</span> is 0.40 without demonstrations and falls to 0.11 with four. For reference, the unmodified model almost never uses <span class="mono">&lt;</span>, while rewriting the instruction to <span class="mono">minimum</span> makes it the most likely choice at every demonstration count.</p>
+      <p>In both tasks the static embeddings causally change the output &mdash; from the selected answer to the program's logic &mdash; yet consistent context progressively overrides them. That is what we would expect if the context-dependent gate controls how much the token-indexed memory contributes.</p>
+
+      <h3>Tracing a numerical edit through a GSM8K solution</h3>
+      <p>The same mechanism carries through multi-step reasoning. On a GSM8K item the unmodified model solves correctly (four-shot chain-of-thought), we remap the STEM row for the token <span class="mono">60</span> to the row for <span class="mono">120</span>. The input text and dense weights are unchanged, and the remapping applies wherever that token id occurs, including in the model's own continuation.</p>
+    </div>
+
+    <figure style="margin-top:26px">
+    <div class="question narrow">
+      <span class="lbl">GSM8K test item 10 &mdash; original question</span>
+      A new program had 60 downloads in the first month. The number of downloads in the second month was three times as many as the downloads in the first month, but then reduced by 30% in the third month. How many downloads did the program have total over the three months?
+    </div>
+
+    <div class="trace">
+      <div class="tcard">
+        <div class="hd"><span>(a) Original model and question</span><span class="ans">366</span></div>
+        <div class="bd">
+          <p>In the first month, the program had 60 downloads.</p>
+          <p>In the second month, the program had 60 x 3 = <span class="calc">⟨⟨60*3=180⟩⟩</span> 180 downloads.</p>
+          <p>In the third month, the program had 180 - (180 x 0.3) = 180 - 54 = <span class="calc">⟨⟨180-54=126⟩⟩</span> 126 downloads.</p>
+          <p>So the program had a total of 60 + 180 + 126 = <span class="calc">⟨⟨60+180+126=366⟩⟩</span> 366 downloads over the three months.</p>
+          <p>#### 366</p>
+        </div>
+      </div>
+      <div class="tcard edit">
+        <div class="hd"><span>(b) STEM row <span class="mono">60</span>&nbsp;&#8614;&nbsp;<span class="mono">120</span>, same question</span><span class="ans">732</span></div>
+        <div class="bd">
+          <p>In the first month, the program had <span class="chg">120</span> downloads.</p>
+          <p>In the second month, the program had <span class="chg">120</span> x 3 = <span class="chg">360</span> downloads.</p>
+          <p>In the third month, the program had <span class="chg">360</span> - (<span class="chg">360</span> x 0.3) = <span class="chg">360</span> - 108 = <span class="chg">252</span> downloads.</p>
+          <p>So the program had a total of <span class="chg">120</span> + <span class="chg">360</span> + <span class="chg">252</span> = <span class="calc">⟨⟨<span class="chg">120</span>+<span class="chg">360</span>+<span class="chg">252</span>=<span class="chg">732</span>⟩⟩</span> 732 downloads over the three months.</p>
+          <p>#### <span class="chg">732</span></p>
+        </div>
+      </div>
+      <div class="tcard ctrl">
+        <div class="hd"><span>(c) Question rewritten 60&nbsp;&rarr;&nbsp;120, original memory</span><span class="ans">732</span></div>
+        <div class="bd">
+          <p>In the first month, the program had <span class="chg">120</span> downloads.</p>
+          <p>In the second month, the program had <span class="chg">120</span> x 3 = <span class="calc">⟨⟨<span class="chg">120</span>*3=<span class="chg">360</span>⟩⟩</span> 360 downloads.</p>
+          <p>In the third month, the program had <span class="chg">360</span> - (<span class="chg">360</span> x 0.3) = <span class="calc">⟨⟨<span class="chg">360</span>-108=<span class="chg">252</span>⟩⟩</span> 252 downloads.</p>
+          <p>So the program had a total of <span class="chg">120</span> + <span class="chg">360</span> + <span class="chg">252</span> = <span class="calc">⟨⟨<span class="chg">120</span>+<span class="chg">360</span>+<span class="chg">252</span>=<span class="chg">732</span>⟩⟩</span> 732 downloads over the three months.</p>
+          <p>#### <span class="chg">732</span></p>
+        </div>
+      </div>
+    </div>
+    <figcaption><b>A token-indexed memory intervention propagates through a GSM8K solution.</b> Full output for the original model, the STEM row update, and the rewritten-question control. Highlights mark the critical numerical changes. With the question unchanged, the row update produces the same intermediate quantities and final answer as explicitly replacing 60 with 120 in the question.</figcaption>
+    </figure>
+
+    <div class="narrow">
+      <p style="margin-top:30px">The row update changes the monthly quantities from 60, 180 and 126 to 120, 360 and 252, and the total from 366 to 732. Agreement with the rewritten-question control suggests the edit changes the effective numerical premise that every later step computes from. This is a single example linking a token-addressable memory edit to coherent downstream reasoning; it does not establish general edit reliability or an isolated fact representation. And because the remapping applies to every occurrence of the token, it does not separate prompt-processing effects from feedback through generated tokens.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= CONCLUSION ================= -->
+<section id="conclusion">
+  <div class="wrap narrow">
+    <h2>Conclusion</h2>
+    <p class="lede">STAPLE is a simple, sample-efficient method for continually expanding the parametric capacity of a pretrained dense model during mid-training. The key idea is to preserve the pretrained model's learned knowledge and complement it with scalable memory.</p>
+
+    <p>STAPLE shows that the system-efficient scaling of static sparsity translates into practical performance gains even in the upcycling setting. Despite introducing a large number of new parameters, it remains highly token-efficient and provides consistent gains as memory scale grows, notably on reasoning-heavy tasks. Compared with a serving-efficient MoE upcycling baseline, STAPLE achieves a higher average score while training faster and decoding 2&times; faster with a much smaller GPU memory footprint. Its token-indexed memory is also interpretable and editable: targeted interventions on individual rows change model behavior, while consistent contextual evidence can still override them, demonstrating the model's flexibility to follow context.</p>
+
+    <p>An exciting direction for future work is whether jointly scaling static memory with MoE can push the performance&ndash;efficiency frontier further.</p>
+  </div>
+</section>
+
+<!-- ================= BIBTEX ================= -->
+<section id="bibtex">
+  <div class="wrap narrow">
+    <h2>Citation</h2>
+    <div style="position:relative; margin-top:24px">
+      <button class="copybtn" id="copybib" style="position:absolute; top:14px; right:14px; float:none; z-index:2">Copy</button>
+<pre class="bib" id="bibtext">@misc{sadhukhan2026staplestaticsparseupcycling,
+      title={STAPLE: Static Sparse Upcycling of Pretrained Checkpoints via Embedding Modules},
+      author={Ranajoy Sadhukhan and Euijin Hong and Sheng Cao and Zechun Liu and
+              Shuowei Jin and Sha Li and Changlong Yu and Xin Liu and Qin Lu and
+              Zhenyu Shi and Priyanka Nigam and Beidi Chen},
+      year={2026},
+      eprint={2610.12599},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2610.12599},
+}</pre>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div>Carnegie Mellon University &nbsp;·&nbsp; D. E. Shaw Research &nbsp;·&nbsp; Meta AI &nbsp;·&nbsp; Amazon Research</div>
+    <div>
+      <a href="https://github.com/Infini-AI-Lab/STAPLE">GitHub</a> &nbsp;·&nbsp;
+      <a href="https://infini-ai-lab.github.io/STEM/">STEM</a> &nbsp;·&nbsp;
+      <a href="https://arxiv.org/abs/2610.12599">Paper</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+  // theme toggle, remembering the visitor's choice
+  (function () {
+    var root = document.documentElement, key = 'staple-theme';
+    try { var saved = localStorage.getItem(key); if (saved) root.setAttribute('data-theme', saved); } catch (e) {}
+    document.getElementById('themebtn').addEventListener('click', function () {
+      var cur = root.getAttribute('data-theme');
+      if (!cur) cur = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      var next = cur === 'dark' ? 'light' : 'dark';
+      root.setAttribute('data-theme', next);
+      try { localStorage.setItem(key, next); } catch (e) {}
+    });
+  })();
+
+  // copy bibtex
+  document.getElementById('copybib').addEventListener('click', function () {
+    var btn = this;
+    navigator.clipboard.writeText(document.getElementById('bibtext').textContent).then(function () {
+      btn.textContent = 'Copied';
+      setTimeout(function () { btn.textContent = 'Copy'; }, 1600);
+    });
+  });
+</script>
+
+<script>
+  window.MathJax = {
+    loader: { load: ['[tex]/html'] },
+    tex: {
+      inlineMath: [['$', '$']], displayMath: [['$$', '$$']],
+      packages: { '[+]': ['html'] }   // enables \class{} for the highlighted terms
+    },
+    options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'] }
+  };
+</script>
+<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+
+</body>
+</html>
